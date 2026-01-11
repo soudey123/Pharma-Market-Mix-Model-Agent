@@ -1,0 +1,293 @@
+{
+  "name": "Pharma MMM Analysis Workflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "start",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/api/v1/generate-sample-data",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "n_weeks",
+              "value": "156"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "generate-data",
+      "name": "Generate Sample Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 300],
+      "notes": "Generates 3 years of synthetic pharma marketing data"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/api/v1/data/validate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ data_json: $json.data_json, date_column: 'date', sales_column: 'sales' }) }}",
+        "options": {}
+      },
+      "id": "validate-data",
+      "name": "Validate Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300],
+      "notes": "Validates data meets MMM requirements"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.is_valid }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-valid",
+      "name": "Is Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/api/v1/data/summary",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ data_json: $('Generate Sample Data').item.json.data_json, date_column: 'date', sales_column: 'sales' }) }}",
+        "options": {}
+      },
+      "id": "get-summary",
+      "name": "Get Data Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 200],
+      "notes": "Gets summary statistics for reporting"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/api/v1/model/train",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ data_json: $('Generate Sample Data').item.json.data_json, date_column: 'date', sales_column: 'sales', spend_columns: ['dtc_tv_spend', 'dtc_digital_spend', 'hcp_detailing_spend', 'conferences_spend', 'samples_spend', 'journal_ads_spend'], control_columns: ['competitor_spend', 'price'], adstock_max_lag: 12, estimate_adstock: true, apply_saturation: true, n_samples: 1000, n_tune: 500, n_chains: 2, target_accept: 0.9 }) }}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "train-model",
+      "name": "Train MMM Model",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1340, 200],
+      "notes": "Trains Bayesian MMM model (may take several minutes)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/api/v1/optimize/budget",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model_id: $json.model_id, total_budget: 25000000, current_allocation: { 'Dtc Tv': 5000000, 'Dtc Digital': 2000000, 'Hcp Detailing': 8000000, 'Conferences': 3000000, 'Samples': 5000000, 'Journal Ads': 2000000 }, optimization_objective: 'maximize_sales', n_periods: 52 }) }}",
+        "options": {}
+      },
+      "id": "optimize-budget",
+      "name": "Optimize Budget",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 200],
+      "notes": "Optimizes budget allocation across channels"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/api/v1/insights/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model_results_json: JSON.stringify($('Train MMM Model').item.json), insight_type: 'summary' }) }}",
+        "options": {}
+      },
+      "id": "generate-insights",
+      "name": "Generate AI Insights",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1780, 200],
+      "notes": "Uses Claude API to generate natural language insights"
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "report_title",
+              "value": "Pharma MMM Analysis Report"
+            },
+            {
+              "name": "model_r_squared",
+              "value": "={{ $('Train MMM Model').item.json.r_squared }}"
+            },
+            {
+              "name": "improvement_percentage",
+              "value": "={{ $('Optimize Budget').item.json.improvement_percentage }}"
+            },
+            {
+              "name": "insights",
+              "value": "={{ $json.content }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "format-report",
+      "name": "Format Report",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [2000, 200],
+      "notes": "Formats final report output"
+    },
+    {
+      "parameters": {
+        "errorMessage": "Data validation failed. Check data format and required columns."
+      },
+      "id": "validation-error",
+      "name": "Validation Error",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [1120, 400]
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Generate Sample Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Sample Data": {
+      "main": [
+        [
+          {
+            "node": "Validate Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Data": {
+      "main": [
+        [
+          {
+            "node": "Is Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Valid?": {
+      "main": [
+        [
+          {
+            "node": "Get Data Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Data Summary": {
+      "main": [
+        [
+          {
+            "node": "Train MMM Model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Train MMM Model": {
+      "main": [
+        [
+          {
+            "node": "Optimize Budget",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Optimize Budget": {
+      "main": [
+        [
+          {
+            "node": "Generate AI Insights",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate AI Insights": {
+      "main": [
+        [
+          {
+            "node": "Format Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "pharma",
+      "id": "1"
+    },
+    {
+      "name": "mmm",
+      "id": "2"
+    },
+    {
+      "name": "marketing-analytics",
+      "id": "3"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-15T00:00:00.000Z",
+  "versionId": "1"
+}
